@@ -1,0 +1,277 @@
+
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f3f6fb;
+    color: #1c2738;
+}
+
+.page-container {
+    width: min(1200px, 94%);
+    margin: 0 auto; 
+    padding: 28px 0 50px;
+}
+
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #dce3ed;
+}
+
+.brand-mark {
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    flex-shrink: 0;
+    border-radius: 14px;
+    background: #163c72;
+    color: white;
+    font-size: 20px;
+    font-weight: 800;
+}
+
+.page-header h1 {
+    margin: 0 0 6px;
+    font-size: clamp(21px, 3vw, 30px);
+}
+
+.page-header p,
+.intro p {
+    margin: 0;
+    color: #66758a;
+    line-height: 1.6;
+}
+
+.intro {
+    margin: 28px 0 22px;
+}
+
+.intro h2,
+.results-section h2 {
+    margin: 0 0 9px;
+    font-size: 23px;
+}
+
+.upload-grid,
+.result-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px;
+}
+
+.upload-card,
+.result-card {
+    min-width: 0;
+    padding: 20px;
+    background: white;
+    border: 1px solid #dfe6ef;
+    border-radius: 16px;
+}
+
+.upload-card h3,
+.result-card h3 {
+    margin: 0 0 7px;
+}
+
+.muted {
+    color: #6c7b90;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.upload-area {
+    display: flex;
+    min-height: 155px;
+    margin-top: 16px;
+    padding: 20px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 2px dashed #a9bad1;
+    border-radius: 12px;
+    background: #f8faff;
+    color: #254d7e;
+    cursor: pointer;
+    text-align: center;
+}
+
+.upload-area:hover {
+    border-color: #245da0;
+    background: #eff5ff;
+}
+
+.upload-icon {
+    font-size: 30px;
+    line-height: 1;
+}
+
+input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
+.preview-image {
+    display: none;
+    width: 100%;
+    max-height: 330px;
+    margin-top: 16px;
+    object-fit: contain;
+    border-radius: 10px;
+    background: #edf1f6;
+}
+
+.compare-button,
+.reset-button {
+    display: block;
+    width: 100%;
+    margin-top: 24px;
+    padding: 15px 20px;
+    border: none;
+    border-radius: 10px;
+    background: #17477f;
+    color: white;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.compare-button:hover,
+.reset-button:hover {
+    background: #103761;
+}
+
+.error-message {
+    margin-top: 22px;
+    padding: 14px;
+    border: 1px solid #f2b8b8;
+    border-radius: 10px;
+    background: #fff0f0;
+    color: #a12424;
+}
+
+.results-section {
+    margin-top: 38px;
+    padding-top: 28px;
+    border-top: 1px solid #dce3ed;
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 20px;
+    margin: 20px 0;
+    font-size: 13px;
+    color: #4f5e72;
+}
+
+.legend span {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+}
+
+.dot.orange {
+    background: #ffb400;
+}
+
+.dot.green {
+    background: #00a83b;
+}
+
+.dot.red {
+    background: #e52b2b;
+}
+
+.result-card img {
+    display: block;
+    width: 100%;
+    max-height: 480px;
+    margin-top: 16px;
+    object-fit: contain;
+    border-radius: 10px;
+    background: #edf1f6;
+}
+
+.result-card p {
+    margin-bottom: 0;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 22px;
+}
+
+.summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px;
+    border: 1px solid #dfe6ef;
+    border-radius: 12px;
+    background: white;
+    color: #37516f;
+}
+
+.summary-card strong {
+    font-size: 30px;
+    color: #13813b;
+}
+
+.summary-card.warning strong {
+    color: #c52c2c;
+}
+
+.result-note {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 10px;
+    background: #fff6df;
+    color: #755719;
+    line-height: 1.6;
+}
+
+.reset-button {
+    background: #52657c;
+}
+
+.reset-button:hover {
+    background: #394b60;
+}
+
+@media (max-width: 720px) {
+    .upload-grid,
+    .result-grid,
+    .summary-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .page-container {
+        width: 92%;
+        padding-top: 18px;
+    }
+
+    .upload-card,
+    .result-card {
+        padding: 15px;
+    }
+}

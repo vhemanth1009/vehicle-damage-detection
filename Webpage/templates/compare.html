@@ -1,0 +1,623 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>QuickRide | Damage Comparison</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f6fb;
+            color: #17243a;
+        }
+
+        header {
+            background: #10294b;
+            color: white;
+            padding: 22px 7%;
+        }
+
+        header h2 {
+            margin: 0;
+            letter-spacing: 0.5px;
+        }
+
+        header p {
+            margin: 7px 0 0;
+            color: #c8d6e8;
+            font-size: 14px;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 1150px;
+            margin: 35px auto;
+        }
+
+        .intro {
+            margin-bottom: 25px;
+        }
+
+        .intro h1 {
+            margin-bottom: 8px;
+        }
+
+        .intro p {
+            color: #64748b;
+            line-height: 1.6;
+        }
+
+        .upload-grid,
+        .image-grid,
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 22px;
+        }
+
+        .panel {
+            background: white;
+            border-radius: 13px;
+            padding: 22px;
+            box-shadow: 0 4px 18px rgba(15, 35, 65, 0.06);
+            margin-bottom: 22px;
+        }
+
+        .panel h3 {
+            margin-top: 0;
+        }
+
+        .upload-box {
+            border: 2px dashed #a8bad0;
+            border-radius: 10px;
+            padding: 25px 15px;
+            text-align: center;
+            background: #f9fbfe;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            margin-top: 15px;
+        }
+
+        .preview {
+            width: 100%;
+            height: 220px;
+            object-fit: contain;
+            margin-top: 15px;
+            display: none;
+            background: #edf2f7;
+            border-radius: 8px;
+        }
+
+        button {
+            width: 100%;
+            border: none;
+            background: #1768d2;
+            color: white;
+            padding: 15px;
+            border-radius: 9px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 22px;
+        }
+
+        button:hover {
+            background: #1055b1;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-radius: 9px;
+            padding: 14px;
+            margin-bottom: 20px;
+        }
+
+        .result-heading {
+            margin: 35px 0 18px;
+        }
+
+        .result-image {
+            width: 100%;
+            height: 300px;
+            object-fit: contain;
+            background: #edf2f7;
+            border-radius: 9px;
+        }
+
+        .count {
+            font-size: 27px;
+            font-weight: bold;
+            color: #1768d2;
+        }
+
+        .damage-item {
+            background: #f5f8fc;
+            padding: 13px;
+            margin: 10px 0;
+            border-radius: 8px;
+            line-height: 1.7;
+        }
+
+        /* POTENTIAL NEW DAMAGE WARNING */
+
+        .warning-panel {
+            background: #fff1f1;
+            border: 2px solid #dc2626;
+            border-left: 7px solid #dc2626;
+            border-radius: 13px;
+            padding: 24px;
+            margin: 25px 0;
+            box-shadow: 0 5px 20px rgba(220, 38, 38, 0.12);
+            animation: warningAppear 0.5s ease;
+        }
+
+        @keyframes warningAppear {
+            from {
+                opacity: 0;
+                transform: translateY(-12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .warning-header {
+            display: flex;
+            align-items: center;
+            gap: 13px;
+            margin-bottom: 12px;
+        }
+
+        .warning-icon {
+            width: 48px;
+            height: 48px;
+            min-width: 48px;
+            background: #dc2626;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 27px;
+            font-weight: bold;
+        }
+
+        .warning-title {
+            color: #991b1b;
+            font-size: 21px;
+            font-weight: bold;
+            margin: 0;
+        }
+
+        .warning-description {
+            color: #7f1d1d;
+            line-height: 1.6;
+            margin: 10px 0 18px;
+        }
+
+        .warning-count {
+            font-size: 38px;
+            font-weight: bold;
+            color: #b91c1c;
+            margin: 5px 0;
+        }
+
+        .warning-label {
+            color: #991b1b;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        .new-damage-card {
+            background: white;
+            border: 1px solid #fecaca;
+            border-left: 5px solid #dc2626;
+            border-radius: 9px;
+            padding: 15px;
+            margin-top: 12px;
+            box-shadow: 0 2px 8px rgba(220, 38, 38, 0.06);
+        }
+
+        .new-damage-card strong {
+            color: #991b1b;
+            font-size: 16px;
+        }
+
+        .new-damage-card p {
+            color: #64748b;
+            margin: 7px 0 0;
+            font-size: 13px;
+        }
+
+        .warning-footer {
+            margin-top: 18px;
+            padding: 12px;
+            background: #fee2e2;
+            border-radius: 8px;
+            color: #991b1b;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .no-warning {
+            background: #f0fdf4;
+            border: 2px solid #16a34a;
+            border-left: 7px solid #16a34a;
+            border-radius: 13px;
+            padding: 22px;
+            margin: 25px 0;
+            color: #166534;
+        }
+
+        .no-warning h3 {
+            margin-top: 0;
+        }
+
+        .existing {
+            border-left: 4px solid #16a34a;
+        }
+
+        .review {
+            border-left: 4px solid #d97706;
+        }
+
+        .empty {
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        .note {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fff7ed;
+            border-radius: 9px;
+            color: #9a3412;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        @media (max-width: 750px) {
+            .upload-grid,
+            .image-grid,
+            .result-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                width: 94%;
+            }
+
+            .warning-title {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h2>QUICKRIDE</h2>
+    <p>Vehicle Damage Inspection System</p>
+</header>
+
+<div class="container">
+
+    <div class="intro">
+        <h1>Login & Logout Damage Comparison</h1>
+        <p>
+            Upload the vehicle images captured before and after the trip.
+            The login image establishes the starting condition of the vehicle.
+        </p>
+    </div>
+
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" enctype="multipart/form-data">
+
+        <div class="upload-grid">
+
+            <div class="panel">
+                <h3>Login Image</h3>
+
+                <div class="upload-box">
+                    <p>Upload the vehicle image at login</p>
+
+                    <input
+                        type="file"
+                        name="login_image"
+                        accept="image/*"
+                        required
+                        onchange="previewImage(this, 'loginPreview')"
+                    >
+
+                    <img
+                        id="loginPreview"
+                        class="preview"
+                        alt="Login preview"
+                    >
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Logout Image</h3>
+
+                <div class="upload-box">
+                    <p>Upload the vehicle image at logout</p>
+
+                    <input
+                        type="file"
+                        name="logout_image"
+                        accept="image/*"
+                        required
+                        onchange="previewImage(this, 'logoutPreview')"
+                    >
+
+                    <img
+                        id="logoutPreview"
+                        class="preview"
+                        alt="Logout preview"
+                    >
+                </div>
+            </div>
+
+        </div>
+
+        <button type="submit">
+            Compare Vehicle Damage
+        </button>
+
+    </form>
+
+
+    {% if login and logout and comparison %}
+
+        <h2 class="result-heading">Prediction Results</h2>
+
+        <div class="image-grid">
+
+            <div class="panel">
+                <h3>Login Prediction</h3>
+
+                <img
+                    class="result-image"
+                    src="{{ login.image_url }}"
+                    alt="Login damage prediction"
+                >
+
+                <p>
+                    Total detected damage:
+                    <span class="count">{{ login.count }}</span>
+                </p>
+            </div>
+
+            <div class="panel">
+                <h3>Logout Prediction</h3>
+
+                <img
+                    class="result-image"
+                    src="{{ logout.image_url }}"
+                    alt="Logout damage prediction"
+                >
+
+                <p>
+                    Total detected damage:
+                    <span class="count">{{ logout.count }}</span>
+                </p>
+            </div>
+
+        </div>
+
+
+        <h2 class="result-heading">Final Damage Comparison</h2>
+
+
+        <!-- WARNING PANEL -->
+
+        {% if comparison.potential_new_damage|length > 0 %}
+
+            <div class="warning-panel">
+
+                <div class="warning-header">
+
+                    <div class="warning-icon">!</div>
+
+                    <div>
+                        <h2 class="warning-title">
+                            Potential New Damage Detected
+                        </h2>
+
+                        <span class="warning-label">
+                            ATTENTION REQUIRED
+                        </span>
+                    </div>
+
+                </div>
+
+                <p class="warning-description">
+                    The logout image contains damage detections that
+                    could not be matched with the login image.
+                    Please inspect the following results.
+                </p>
+
+                <div class="warning-count">
+                    {{ comparison.potential_new_damage|length }}
+                </div>
+
+                <div class="warning-label">
+                    POTENTIAL NEW DAMAGE DETECTIONS
+                </div>
+
+                {% for item in comparison.potential_new_damage %}
+
+                    <div class="new-damage-card">
+
+                        <strong>
+                            ⚠ {{ item.damage|replace('_', ' ')|title }}
+                        </strong>
+
+                        <p>
+                            Model confidence:
+                            <b>{{ item.confidence }}%</b>
+                        </p>
+
+                        <p>
+                            Bounding box:
+                            {{ item.box[0] }},
+                            {{ item.box[1] }},
+                            {{ item.box[2] }},
+                            {{ item.box[3] }}
+                        </p>
+
+                    </div>
+
+                {% endfor %}
+
+                <div class="warning-footer">
+                    <strong>Review required:</strong>
+                    These are potential new damage detections, not
+                    confirmed driver-caused damage. Verify them
+                    before taking any penalty action.
+                </div>
+
+            </div>
+
+        {% else %}
+
+            <div class="no-warning">
+
+                <h3>✓ No Potential New Damage Detected</h3>
+
+                <p>
+                    No unmatched damage detections were identified
+                    in the logout image. No new damage is flagged
+                    by this comparison.
+                </p>
+
+            </div>
+
+        {% endif %}
+
+
+        <div class="result-grid">
+
+            <div class="panel">
+
+                <h3>Existing Damage</h3>
+
+                <div class="count">
+                    {{ comparison.existing_damage|length }}
+                </div>
+
+                {% for item in comparison.existing_damage %}
+
+                    <div class="damage-item existing">
+
+                        <strong>
+                            {{ item.damage|replace('_', ' ')|title }}
+                        </strong>
+
+                        <br>
+
+                        Confidence: {{ item.confidence }}%
+
+                    </div>
+
+                {% else %}
+
+                    <p class="empty">
+                        No existing damage matches identified.
+                    </p>
+
+                {% endfor %}
+
+            </div>
+
+
+            <div class="panel">
+
+                <h3>Needs Manual Review</h3>
+
+                <div class="count">
+                    {{ comparison.needs_review|length }}
+                </div>
+
+                {% for item in comparison.needs_review %}
+
+                    <div class="damage-item review">
+
+                        <strong>
+                            {{ item.damage|replace('_', ' ')|title }}
+                        </strong>
+
+                        <br>
+
+                        Confidence: {{ item.confidence }}%
+
+                        <br>
+
+                        <small>
+                            Same damage type was present at login,
+                            but matching was uncertain.
+                        </small>
+
+                    </div>
+
+                {% else %}
+
+                    <p class="empty">
+                        No uncertain same-type matches.
+                    </p>
+
+                {% endfor %}
+
+            </div>
+
+        </div>
+
+
+        <div class="note">
+            <strong>Important:</strong>
+            Potential new damage is an initial prediction, not proof
+            that the current driver caused it. Manual verification
+            is required before any penalty. Confidence represents
+            model confidence, not damage severity.
+        </div>
+
+    {% endif %}
+
+</div>
+
+
+<script>
+
+function previewImage(input, previewId) {
+
+    const preview = document.getElementById(previewId);
+
+    if (input.files && input.files[0]) {
+
+        preview.src = URL.createObjectURL(input.files[0]);
+
+        preview.style.display = "block";
+    }
+}
+
+</script>
+
+</body>
+</html>

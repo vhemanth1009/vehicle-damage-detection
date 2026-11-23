@@ -1,0 +1,21 @@
+Assignment / Unassignment manifest summary
+============================================
+Total expected images (from CSV):  43712
+Not downloaded / missing locally:  646
+Corrupt / unreadable:               0
+Near-empty files:                   0
+Extreme aspect ratio (flag only):   0
+Duplicate content (by hash):         20
+Usable (rough):                     43066
+
+Per side x angle breakdown:
+                    total  downloaded_ok  missing  corrupt
+side         angle                                        
+assignment   back    5464           5388       76        0
+             front   5464           5355      109        0
+             left    5464           5368       96        0
+             right   5464           5373       91        0
+unassignment back    5464           5402       62        0
+             front   5464           5391       73        0
+             left    5464           5391       73        0
+             right   5464           5398       66        0
