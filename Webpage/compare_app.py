@@ -1,11 +1,17 @@
 
 from pathlib import Path
 import uuid
+import os
 
 import cv2
 import numpy as np
 
-from flask import Flask, render_template, request, send_from_directory
+import requests
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
+from flask import Flask, render_template, request, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 from ultralytics import YOLO
 
@@ -41,6 +47,13 @@ app = Flask(
 )
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+# Approved image-host settings. Configure the trusted image storage
+# hostname(s) through QUICKRIDE_IMAGE_HOSTS before starting Flask.
+# Comma-separated exact hostnames, for example:
+# QUICKRIDE_IMAGE_HOSTS=my-bucket.s3.ap-south-1.amazonaws.com
+
+MAX_REMOTE_IMAGE_SIZE = 10 * 1024 * 1024
 
 model = YOLO(str(MODEL_PATH))
 
@@ -173,6 +186,108 @@ def visual_similarity(crop1, crop2):
                 good_matches.append(first)
 
     return len(good_matches) >= 8
+
+
+def download_image_from_url(image_url, prefix):
+    """
+    Download an image only from a hostname explicitly approved
+    through QUICKRIDE_IMAGE_HOSTS.
+    """
+
+    if not isinstance(image_url, str) or not image_url.strip():
+        raise ValueError("A valid image URL is required.")
+
+    parsed = urlparse(image_url.strip())
+
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("Only valid HTTPS image URLs are allowed.")
+
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing credentials are not allowed.")
+
+    if parsed.port not in (None, 443):
+        raise ValueError("Only HTTPS port 443 is allowed.")
+
+    hostname = parsed.hostname.lower()
+
+
+    # Reject hostnames that resolve to private, local, or reserved IPs.
+    try:
+        addresses = socket.getaddrinfo(
+            hostname, 443, type=socket.SOCK_STREAM
+        )
+    except socket.gaierror:
+        raise ValueError("The image URL hostname could not be resolved.")
+
+    if not addresses:
+        raise ValueError("The image URL hostname has no valid address.")
+
+    for address in addresses:
+        ip = ipaddress.ip_address(address[4][0])
+        if not ip.is_global:
+            raise ValueError("The image URL points to a restricted address.")
+
+    image_path = UPLOAD_FOLDER / f"{uuid.uuid4().hex}_{prefix}.jpg"
+    response = None
+    total_size = 0
+
+    try:
+        response = requests.get(
+            image_url.strip(),
+            timeout=(5, 30),
+            stream=True,
+            allow_redirects=False
+        )
+        response.raise_for_status()
+
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_REMOTE_IMAGE_SIZE:
+                    raise ValueError("Image exceeds the 10 MB size limit.")
+            except ValueError as exc:
+                if "10 MB" in str(exc):
+                    raise
+                raise ValueError("Invalid image Content-Length header.")
+
+        with open(image_path, "wb") as output_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+
+                total_size += len(chunk)
+                if total_size > MAX_REMOTE_IMAGE_SIZE:
+                    raise ValueError("Image exceeds the 10 MB size limit.")
+
+                output_file.write(chunk)
+
+        # Check actual image contents rather than trusting the file extension.
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise ValueError("The supplied URL did not return a valid image.")
+
+        return image_path
+
+    except Exception:
+        if image_path.exists():
+            image_path.unlink()
+        raise
+
+    finally:
+        if response is not None:
+            response.close()
+
+
+def make_json_safe_result(result):
+    """
+    Remove the internal NumPy image array. It is needed for comparison,
+    but cannot be serialized into a JSON response.
+    """
+    return {
+        key: value
+        for key, value in result.items()
+        if key != "original_image"
+    }
 
 
 # --------------------------------------------------
@@ -373,7 +488,7 @@ def compare_damage(login_result, logout_result):
 # 5. MAIN PAGE
 # --------------------------------------------------
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/quickride-damage-detection", methods=["GET", "POST"])
 def compare():
 
     if request.method == "GET":
@@ -444,7 +559,87 @@ def compare():
 
 
 # --------------------------------------------------
-# 6. SERVE ANNOTATED IMAGES
+# 6. POSTMAN API: DOWNLOAD URLS AND COMPARE DAMAGE
+# --------------------------------------------------
+
+@app.route("/api/vehicle-damage-detection", methods=["POST"])
+def vehicle_damage_detection_api():
+
+    # Postman sends the two URLs as x-www-form-urlencoded text fields.
+    login_url = request.form.get("login_image_url", "").strip()
+    logout_url = request.form.get("logout_image_url", "").strip()
+
+    if not login_url or not logout_url:
+        return jsonify({
+            "status": "error",
+            "message": "Please provide both login_image_url and logout_image_url."
+        }), 400
+
+    login_path = None
+    logout_path = None
+
+    try:
+        # Download the two source images from approved HTTPS URLs.
+        login_path = download_image_from_url(login_url, "api_login")
+        logout_path = download_image_from_url(logout_url, "api_logout")
+
+        # Reuse the same YOLO model and comparison functions as the webpage.
+        login_result = detect_damage(login_path)
+        logout_result = detect_damage(logout_path)
+
+        comparison = compare_damage(login_result, logout_result)
+
+        # Remove the internal NumPy image arrays before returning JSON.
+        login_json = make_json_safe_result(login_result)
+        logout_json = make_json_safe_result(logout_result)
+
+        # Return full URLs so Postman/Java clients can open annotated images.
+        login_json["image_url"] = request.host_url.rstrip("/") + login_json["image_url"]
+        logout_json["image_url"] = request.host_url.rstrip("/") + logout_json["image_url"]
+
+        return jsonify({
+            "status": "success",
+            "login_result": login_json,
+            "logout_result": logout_json,
+            "comparison": comparison
+        }), 200
+
+    except ValueError as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 400
+
+    except RuntimeError as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+
+    except requests.RequestException:
+        app.logger.exception("Unable to download one of the supplied images.")
+        return jsonify({
+            "status": "error",
+            "message": "Unable to download one of the supplied images. Check that the URLs are reachable."
+        }), 400
+
+    except Exception:
+        app.logger.exception("Vehicle damage detection API failed.")
+        return jsonify({
+            "status": "error",
+            "message": "Vehicle damage detection failed. Check the Flask terminal for details."
+        }), 500
+
+    finally:
+        # Delete downloaded source images after processing. The annotated
+        # result images created by detect_damage() remain in the uploads folder.
+        for image_path in (login_path, logout_path):
+            if image_path is not None and image_path.exists():
+                image_path.unlink()
+
+
+# --------------------------------------------------
+# 7. SERVE ANNOTATED IMAGES
 # --------------------------------------------------
 
 @app.route("/uploads/<filename>")
@@ -457,7 +652,7 @@ def uploaded_file(filename):
 
 
 # --------------------------------------------------
-# 7. RUN APPLICATION
+# 8. RUN APPLICATION
 # --------------------------------------------------
 
 if __name__ == "__main__":
