@@ -1,18 +1,16 @@
 
-from pathlib import Path
-import uuid
 import os
-
-import cv2
-import numpy as np
-
+from pathlib import Path
+import base64
+import tempfile
 import requests
 import ipaddress
 import socket
-from urllib.parse import urlparse
 
-from flask import Flask, render_template, request, send_from_directory, jsonify
-from werkzeug.utils import secure_filename
+import cv2
+
+from urllib.parse import urlparse
+from flask import Flask, render_template, request, jsonify
 from ultralytics import YOLO
 
 
@@ -31,29 +29,29 @@ MODEL_PATH = (
     / "best.pt"
 )
 
-UPLOAD_FOLDER = PROJECT_FOLDER / "uploads"
-
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 CONFIDENCE_THRESHOLD = 0.05
 IOU_THRESHOLD = 0.30
 
-UPLOAD_FOLDER.mkdir(exist_ok=True)
+MAX_REMOTE_IMAGE_SIZE = 10 * 1024 * 1024
+
+# Approved image hostnames.
+# Configure using QUICKRIDE_IMAGE_HOSTS environment variable.
+
+ALLOWED_IMAGE_HOSTS = {
+    host.strip().lower()
+    for host in os.getenv("QUICKRIDE_IMAGE_HOSTS", "").split(",")
+    if host.strip()
+}
 
 app = Flask(
     __name__,
     template_folder="templates",
     static_folder="static"
 )
-app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
+
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
-
-# Approved image-host settings. Configure the trusted image storage
-# hostname(s) through QUICKRIDE_IMAGE_HOSTS before starting Flask.
-# Comma-separated exact hostnames, for example:
-# QUICKRIDE_IMAGE_HOSTS=my-bucket.s3.ap-south-1.amazonaws.com
-
-MAX_REMOTE_IMAGE_SIZE = 10 * 1024 * 1024
 
 model = YOLO(str(MODEL_PATH))
 
@@ -63,6 +61,7 @@ model = YOLO(str(MODEL_PATH))
 # --------------------------------------------------
 
 def allowed_file(filename):
+
     return (
         "." in filename
         and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -70,13 +69,6 @@ def allowed_file(filename):
 
 
 def calculate_normalized_iou(box1, image1_shape, box2, image2_shape):
-    """
-    Calculate IoU after converting both bounding boxes
-    into relative image coordinates.
-
-    This helps when login and logout images have
-    different resolutions.
-    """
 
     height1, width1 = image1_shape[:2]
     height2, width2 = image2_shape[:2]
@@ -84,7 +76,6 @@ def calculate_normalized_iou(box1, image1_shape, box2, image2_shape):
     x1a, y1a, x2a, y2a = box1
     x1b, y1b, x2b, y2b = box2
 
-    # Normalize login bounding box
     box1 = [
         x1a / width1,
         y1a / height1,
@@ -92,7 +83,6 @@ def calculate_normalized_iou(box1, image1_shape, box2, image2_shape):
         y2a / height1
     ]
 
-    # Normalize logout bounding box
     box2 = [
         x1b / width2,
         y1b / height2,
@@ -140,9 +130,6 @@ def crop_damage(image, box):
 
 
 def visual_similarity(crop1, crop2):
-    """
-    Compare two damage regions using ORB features.
-    """
 
     if crop1.size == 0 or crop2.size == 0:
         return False
@@ -152,13 +139,8 @@ def visual_similarity(crop1, crop2):
 
     orb = cv2.ORB_create(nfeatures=500)
 
-    keypoints1, descriptors1 = orb.detectAndCompute(
-        gray1, None
-    )
-
-    keypoints2, descriptors2 = orb.detectAndCompute(
-        gray2, None
-    )
+    keypoints1, descriptors1 = orb.detectAndCompute(gray1, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(gray2, None)
 
     if descriptors1 is None or descriptors2 is None:
         return False
@@ -188,16 +170,51 @@ def visual_similarity(crop1, crop2):
     return len(good_matches) >= 8
 
 
+def image_to_base64(image):
+
+    success, buffer = cv2.imencode(
+        ".jpg",
+        image,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+    )
+
+    if not success:
+        raise RuntimeError("Unable to encode the annotated image as JPEG.")
+
+    return base64.b64encode(buffer.tobytes()).decode("utf-8")
+
+
+def make_json_safe_result(result):
+
+    excluded_keys = {
+        "original_image",
+        "annotated_image",
+        "image_base64"
+    }
+
+    return {
+        key: value
+        for key, value in result.items()
+        if key not in excluded_keys
+    }
+
+
+# --------------------------------------------------
+# 3. DOWNLOAD IMAGE FROM APPROVED HTTPS URL
+# --------------------------------------------------
+
 def download_image_from_url(image_url, prefix):
-    """
-    Download an image only from a hostname explicitly approved
-    through QUICKRIDE_IMAGE_HOSTS.
-    """
 
     if not isinstance(image_url, str) or not image_url.strip():
         raise ValueError("A valid image URL is required.")
 
-    parsed = urlparse(image_url.strip())
+    image_url = image_url.strip()
+
+    try:
+        parsed = urlparse(image_url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("The supplied image URL is invalid.")
 
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("Only valid HTTPS image URLs are allowed.")
@@ -205,17 +222,29 @@ def download_image_from_url(image_url, prefix):
     if parsed.username or parsed.password:
         raise ValueError("URLs containing credentials are not allowed.")
 
-    if parsed.port not in (None, 443):
+    if port not in (None, 443):
         raise ValueError("Only HTTPS port 443 is allowed.")
 
     hostname = parsed.hostname.lower()
 
+    # Require an explicitly approved hostname.
 
-    # Reject hostnames that resolve to private, local, or reserved IPs.
+    if not ALLOWED_IMAGE_HOSTS:
+        raise ValueError("No approved image hosts are configured.")
+
+    if hostname not in ALLOWED_IMAGE_HOSTS:
+        raise ValueError("This image URL hostname is not approved.")
+
+    # Reject private, local and reserved IP addresses.
+
     try:
+
         addresses = socket.getaddrinfo(
-            hostname, 443, type=socket.SOCK_STREAM
+            hostname,
+            443,
+            type=socket.SOCK_STREAM
         )
+
     except socket.gaierror:
         raise ValueError("The image URL hostname could not be resolved.")
 
@@ -223,75 +252,89 @@ def download_image_from_url(image_url, prefix):
         raise ValueError("The image URL hostname has no valid address.")
 
     for address in addresses:
+
         ip = ipaddress.ip_address(address[4][0])
+
         if not ip.is_global:
             raise ValueError("The image URL points to a restricted address.")
 
-    image_path = UPLOAD_FOLDER / f"{uuid.uuid4().hex}_{prefix}.jpg"
+    image_path = None
     response = None
     total_size = 0
 
     try:
+
         response = requests.get(
-            image_url.strip(),
+            image_url,
             timeout=(5, 30),
             stream=True,
             allow_redirects=False
         )
+
         response.raise_for_status()
 
         content_length = response.headers.get("Content-Length")
+
         if content_length:
+
             try:
+
                 if int(content_length) > MAX_REMOTE_IMAGE_SIZE:
                     raise ValueError("Image exceeds the 10 MB size limit.")
+
             except ValueError as exc:
+
                 if "10 MB" in str(exc):
                     raise
+
                 raise ValueError("Invalid image Content-Length header.")
 
-        with open(image_path, "wb") as output_file:
+        # Create a temporary file instead of using an uploads folder.
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".jpg",
+            prefix=f"{prefix}_",
+            delete=False
+        ) as output_file:
+
+            image_path = Path(output_file.name)
+
             for chunk in response.iter_content(chunk_size=8192):
+
                 if not chunk:
                     continue
 
                 total_size += len(chunk)
+
                 if total_size > MAX_REMOTE_IMAGE_SIZE:
                     raise ValueError("Image exceeds the 10 MB size limit.")
 
                 output_file.write(chunk)
 
-        # Check actual image contents rather than trusting the file extension.
+        # Validate the downloaded image.
+
         image = cv2.imread(str(image_path))
+
         if image is None:
             raise ValueError("The supplied URL did not return a valid image.")
 
         return image_path
 
     except Exception:
-        if image_path.exists():
+
+        if image_path is not None and image_path.exists():
             image_path.unlink()
+
         raise
 
     finally:
+
         if response is not None:
             response.close()
 
 
-def make_json_safe_result(result):
-    """
-    Remove the internal NumPy image array. It is needed for comparison,
-    but cannot be serialized into a JSON response.
-    """
-    return {
-        key: value
-        for key, value in result.items()
-        if key != "original_image"
-    }
-
-
 # --------------------------------------------------
-# 3. YOLO DAMAGE DETECTION
+# 4. YOLO DAMAGE DETECTION
 # --------------------------------------------------
 
 def detect_damage(image_path):
@@ -299,7 +342,7 @@ def detect_damage(image_path):
     image = cv2.imread(str(image_path))
 
     if image is None:
-        raise ValueError("Unable to read the uploaded image.")
+        raise ValueError("Unable to read the supplied image.")
 
     results = model.predict(
         source=image,
@@ -333,21 +376,21 @@ def detect_damage(image_path):
 
     annotated_image = results[0].plot()
 
-    output_filename = f"{uuid.uuid4().hex}_result.jpg"
-    output_path = UPLOAD_FOLDER / output_filename
+    # Convert annotated image directly into Base64.
 
-    cv2.imwrite(str(output_path), annotated_image)
+    annotated_image_base64 = image_to_base64(annotated_image)
 
     return {
         "count": len(detections),
         "detections": detections,
-        "image_url": f"/uploads/{output_filename}",
-        "original_image": image
+        "image_base64": annotated_image_base64,
+        "original_image": image,
+        "annotated_image": annotated_image
     }
 
 
 # --------------------------------------------------
-# 4. LOGIN AND LOGOUT DAMAGE COMPARISON
+# 5. LOGIN AND LOGOUT DAMAGE COMPARISON
 # --------------------------------------------------
 
 def compare_damage(login_result, logout_result):
@@ -362,24 +405,17 @@ def compare_damage(login_result, logout_result):
     potential_new_damage = []
     needs_review = []
 
-    # Track which detections have already been matched.
-    # This prevents one login detection from matching
-    # multiple logout detections.
-
     matched_login = set()
     matched_logout = set()
 
     possible_matches = []
 
-    # ----------------------------------------------
-    # STEP 1: FIND POSSIBLE ONE-TO-ONE MATCHES
-    # ----------------------------------------------
+    # STEP 1: FIND POSSIBLE MATCHES
 
     for login_index, login_detection in enumerate(login_detections):
 
         for logout_index, logout_detection in enumerate(logout_detections):
 
-            # Only compare detections of the same damage class.
             if login_detection["class_id"] != logout_detection["class_id"]:
                 continue
 
@@ -405,12 +441,8 @@ def compare_damage(login_result, logout_result):
                 logout_crop
             )
 
-            # A pair is considered a strong match when
-            # either its overlap or visual similarity is sufficient.
             if iou >= IOU_THRESHOLD or visually_similar:
 
-                # Prefer pairs with visual similarity and
-                # higher bounding-box overlap.
                 match_score = iou + (1 if visually_similar else 0)
 
                 possible_matches.append((
@@ -419,9 +451,7 @@ def compare_damage(login_result, logout_result):
                     logout_index
                 ))
 
-    # ----------------------------------------------
-    # STEP 2: ASSIGN MATCHES WITHOUT REUSING DETECTIONS
-    # ----------------------------------------------
+    # STEP 2: ASSIGN ONE-TO-ONE MATCHES
 
     possible_matches.sort(
         key=lambda item: item[0],
@@ -430,7 +460,6 @@ def compare_damage(login_result, logout_result):
 
     for score, login_index, logout_index in possible_matches:
 
-        # Skip if either detection has already been matched.
         if login_index in matched_login:
             continue
 
@@ -444,17 +473,13 @@ def compare_damage(login_result, logout_result):
             logout_detections[logout_index]
         )
 
-    # ----------------------------------------------
     # STEP 3: CLASSIFY UNMATCHED LOGOUT DETECTIONS
-    # ----------------------------------------------
 
     for logout_index, logout_detection in enumerate(logout_detections):
 
         if logout_index in matched_logout:
             continue
 
-        # Find login detections of the same class that
-        # have not already been matched.
         remaining_same_class_login = [
             index
             for index, login_detection in enumerate(login_detections)
@@ -467,14 +492,10 @@ def compare_damage(login_result, logout_result):
 
         if remaining_same_class_login:
 
-            # A similar damage type existed at login,
-            # but we could not confidently match it.
             needs_review.append(logout_detection)
 
         else:
 
-            # No available login detection of this class
-            # remains. Treat this as potential new damage.
             potential_new_damage.append(logout_detection)
 
     return {
@@ -485,7 +506,7 @@ def compare_damage(login_result, logout_result):
 
 
 # --------------------------------------------------
-# 5. MAIN PAGE
+# 6. MAIN WEBPAGE
 # --------------------------------------------------
 
 @app.route("/quickride-damage-detection", methods=["GET", "POST"])
@@ -503,6 +524,7 @@ def compare():
         or not login_file.filename
         or not logout_file.filename
     ):
+
         return render_template(
             "compare.html",
             error="Please upload both login and logout images."
@@ -512,28 +534,41 @@ def compare():
         not allowed_file(login_file.filename)
         or not allowed_file(logout_file.filename)
     ):
+
         return render_template(
             "compare.html",
             error="Only JPG, JPEG, PNG and WEBP images are allowed."
         )
 
-    login_name = (
-        f"{uuid.uuid4().hex}_login_"
-        + secure_filename(login_file.filename)
-    )
-
-    logout_name = (
-        f"{uuid.uuid4().hex}_logout_"
-        + secure_filename(logout_file.filename)
-    )
-
-    login_path = UPLOAD_FOLDER / login_name
-    logout_path = UPLOAD_FOLDER / logout_name
-
-    login_file.save(str(login_path))
-    logout_file.save(str(logout_path))
+    login_path = None
+    logout_path = None
 
     try:
+
+        login_suffix = Path(login_file.filename).suffix.lower()
+        logout_suffix = Path(logout_file.filename).suffix.lower()
+
+        # Save login image temporarily.
+
+        with tempfile.NamedTemporaryFile(
+            suffix=login_suffix,
+            prefix="login_",
+            delete=False
+        ) as temp_login:
+
+            login_path = Path(temp_login.name)
+            login_file.save(str(login_path))
+
+        # Save logout image temporarily.
+
+        with tempfile.NamedTemporaryFile(
+            suffix=logout_suffix,
+            prefix="logout_",
+            delete=False
+        ) as temp_logout:
+
+            logout_path = Path(temp_logout.name)
+            logout_file.save(str(logout_path))
 
         login_result = detect_damage(login_path)
         logout_result = detect_damage(logout_path)
@@ -552,103 +587,166 @@ def compare():
 
     except Exception as error:
 
+        app.logger.exception("Webpage damage detection failed.")
+
         return render_template(
             "compare.html",
             error=f"Prediction failed: {str(error)}"
         )
 
+    finally:
+
+        # Delete temporary input images.
+
+        for image_path in (login_path, logout_path):
+
+            if image_path is not None and image_path.exists():
+                image_path.unlink()
+
 
 # --------------------------------------------------
-# 6. POSTMAN API: DOWNLOAD URLS AND COMPARE DAMAGE
+# 7. REST API
 # --------------------------------------------------
 
-@app.route("/api/vehicle-damage-detection", methods=["POST"])
-def vehicle_damage_detection_api():
+# Health check endpoint
 
-    # Postman sends the two URLs as x-www-form-urlencoded text fields.
-    login_url = request.form.get("login_image_url", "").strip()
-    logout_url = request.form.get("logout_image_url", "").strip()
+@app.route("/api/v1/health", methods=["GET"])
+def health_check():
 
-    if not login_url or not logout_url:
+    return jsonify({
+        "status": "success",
+        "message": "QuickRide Vehicle Damage Detection API is running."
+    }), 200
+
+
+# Login and logout image comparison endpoint
+
+@app.route(
+    "/api/v1/vehicle-damage-comparisons",
+    methods=["POST"]
+)
+def vehicle_damage_comparison():
+
+    # Accept JSON requests only.
+
+    if request.is_json:
+        data = request.get_json()
+    elif request.form:
+        data = request.form.to_dict()
+    else:
         return jsonify({
             "status": "error",
-            "message": "Please provide both login_image_url and logout_image_url."
+            "message": "Please send input using JSON or x-www-form-urlencoded."
+        }), 400
+
+    if not isinstance(data, dict):
+
+        return jsonify({
+            "status": "error",
+            "message": "Invalid JSON request body."
+        }), 400
+
+    login_url = data.get("login_image_url")
+    logout_url = data.get("logout_image_url")
+
+    if (
+        not isinstance(login_url, str)
+        or not isinstance(logout_url, str)
+        or not login_url.strip()
+        or not logout_url.strip()
+    ):
+
+        return jsonify({
+            "status": "error",
+            "message": "Both login_image_url and logout_image_url are required."
         }), 400
 
     login_path = None
     logout_path = None
 
     try:
-        # Download the two source images from approved HTTPS URLs.
-        login_path = download_image_from_url(login_url, "api_login")
-        logout_path = download_image_from_url(logout_url, "api_logout")
 
-        # Reuse the same YOLO model and comparison functions as the webpage.
+        # Download both source images temporarily.
+
+        login_path = download_image_from_url(
+            login_url,
+            "api_login"
+        )
+
+        logout_path = download_image_from_url(
+            logout_url,
+            "api_logout"
+        )
+
+        # Run YOLO detection.
+
         login_result = detect_damage(login_path)
         logout_result = detect_damage(logout_path)
 
-        comparison = compare_damage(login_result, logout_result)
+        # Compare login and logout damage.
 
-        # Remove the internal NumPy image arrays before returning JSON.
+        comparison = compare_damage(
+            login_result,
+            logout_result
+        )
+
+        # Remove internal NumPy arrays before JSON conversion.
+
         login_json = make_json_safe_result(login_result)
         logout_json = make_json_safe_result(logout_result)
 
-        # Return full URLs so Postman/Java clients can open annotated images.
-        login_json["image_url"] = request.host_url.rstrip("/") + login_json["image_url"]
-        logout_json["image_url"] = request.host_url.rstrip("/") + logout_json["image_url"]
+        # Return annotated images as Base64 strings.
+
+        login_json["annotated_image_base64"] = login_result["image_base64"]
+        logout_json["annotated_image_base64"] = logout_result["image_base64"]
 
         return jsonify({
             "status": "success",
-            "login_result": login_json,
-            "logout_result": logout_json,
-            "comparison": comparison
+            "message": "Vehicle damage comparison completed.",
+            "data": {
+                "login_result": login_json,
+                "logout_result": logout_json,
+                "comparison": comparison
+            }
         }), 200
 
     except ValueError as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
         }), 400
 
-    except RuntimeError as error:
-        return jsonify({
-            "status": "error",
-            "message": str(error)
-        }), 500
-
     except requests.RequestException:
-        app.logger.exception("Unable to download one of the supplied images.")
+
+        app.logger.exception(
+            "Unable to download one of the supplied images."
+        )
+
         return jsonify({
             "status": "error",
             "message": "Unable to download one of the supplied images. Check that the URLs are reachable."
         }), 400
 
     except Exception:
-        app.logger.exception("Vehicle damage detection API failed.")
+
+        app.logger.exception(
+            "Vehicle damage comparison API failed."
+        )
+
         return jsonify({
             "status": "error",
-            "message": "Vehicle damage detection failed. Check the Flask terminal for details."
+            "message": "Vehicle damage comparison failed. Check the Flask terminal for details."
         }), 500
 
     finally:
-        # Delete downloaded source images after processing. The annotated
-        # result images created by detect_damage() remain in the uploads folder.
+
+        # Delete downloaded source images after processing.
+
         for image_path in (login_path, logout_path):
+
             if image_path is not None and image_path.exists():
                 image_path.unlink()
-
-
-# --------------------------------------------------
-# 7. SERVE ANNOTATED IMAGES
-# --------------------------------------------------
-
-@app.route("/uploads/<filename>")
-def uploaded_file(filename):
-
-    return send_from_directory(
-        app.config["UPLOAD_FOLDER"],
-        filename
-    )
 
 
 # --------------------------------------------------
